@@ -6,6 +6,9 @@ on:
       - 'releases/**'
   workflow_dispatch:
 
+permissions:
+  contents: write  # Needed to create releases
+
 jobs:
   security-tests:
     runs-on: ubuntu-latest
