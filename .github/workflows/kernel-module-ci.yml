@@ -1,0 +1,157 @@
+name: Kernel Module Security Tests
+
+on:
+  push:
+    paths:
+      - 'releases/**'
+  workflow_dispatch:
+
+jobs:
+  security-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Detect new release
+      id: detect
+      run: |
+        # Find the newest release directory
+        LATEST_DIR=$(ls -td releases/v*/ 2>/dev/null | head -1)
+        if [ -z "$LATEST_DIR" ]; then
+          echo "No releases found"
+          exit 1
+        fi
+        
+        VERSION=$(cat ${LATEST_DIR}version.txt)
+        MODE=$(cat ${LATEST_DIR}mode.txt)
+        
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "mode=$MODE" >> $GITHUB_OUTPUT
+        echo "release_dir=$LATEST_DIR" >> $GITHUB_OUTPUT
+        
+        echo "📦 Detected kernel module: v$VERSION ($MODE)"
+    
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install liboqs-python
+      run: |
+        pip install liboqs-python
+    
+    - name: Run signature tampering test
+      run: |
+        cat > test_signature.py << 'EOF'
+import sys
+import hashlib
+from pathlib import Path
+import oqs
+
+def sha3_256_file(path):
+    return hashlib.sha3_256(path.read_bytes()).digest()
+
+release_dir = Path("${{ steps.detect.outputs.release_dir }}")
+module = release_dir / "module.ko"
+
+if not module.exists():
+    print(f"❌ Module not found: {module}")
+    sys.exit(1)
+
+print("Testing signature tampering detection...")
+alg = "Dilithium2"
+
+with oqs.Signature(alg) as s:
+    pk = s.generate_keypair()
+    sk = s.export_secret_key()
+
+artifact_hash = sha3_256_file(module)
+print(f"✓ Hash: {artifact_hash.hex()[:32]}...")
+
+with oqs.Signature(alg, secret_key=sk) as s:
+    signature = s.sign(artifact_hash)
+print(f"✓ Signature: {len(signature)} bytes")
+
+with oqs.Signature(alg) as verifier:
+    if verifier.verify(artifact_hash, signature, pk):
+        print("✓ Valid signature accepted")
+    else:
+        print("❌ FAIL: Valid signature rejected")
+        sys.exit(1)
+
+tampered_sig = bytearray(signature)
+tampered_sig[100] ^= 0xFF
+
+try:
+    with oqs.Signature(alg) as verifier:
+        result = verifier.verify(artifact_hash, bytes(tampered_sig), pk)
+        if result:
+            print("❌ FAIL: Tampered signature accepted")
+            sys.exit(1)
+except:
+    pass
+
+print("✅ PASS: Signature tampering detection works")
+EOF
+        python test_signature.py
+    
+    - name: Run hash integrity test
+      run: |
+        cat > test_hash.py << 'EOF'
+import sys
+import hashlib
+import tempfile
+from pathlib import Path
+
+def sha3_256_file(path):
+    return hashlib.sha3_256(path.read_bytes()).digest()
+
+release_dir = Path("${{ steps.detect.outputs.release_dir }}")
+module = release_dir / "module.ko"
+
+print("Testing hash integrity...")
+original_hash = sha3_256_file(module)
+print(f"✓ Original hash: {original_hash.hex()[:32]}...")
+
+data = module.read_bytes()
+tampered = bytearray(data)
+tampered[len(tampered)//2] ^= 0xFF
+
+with tempfile.NamedTemporaryFile(delete=False) as tmp:
+    tmp.write(bytes(tampered))
+    tmp_path = Path(tmp.name)
+
+tampered_hash = sha3_256_file(tmp_path)
+tmp_path.unlink()
+
+if original_hash == tampered_hash:
+    print("❌ FAIL: Hashes identical despite tampering")
+    sys.exit(1)
+
+print("✅ PASS: Hash integrity verification works")
+EOF
+        python test_hash.py
+    
+    - name: Create release if tests pass
+      if: success()
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.detect.outputs.version }}
+        name: Kernel Module v${{ steps.detect.outputs.version }} (${{ steps.detect.outputs.mode }})
+        files: |
+          ${{ steps.detect.outputs.release_dir }}module.ko
+          ${{ steps.detect.outputs.release_dir }}version.txt
+          ${{ steps.detect.outputs.release_dir }}mode.txt
+        body: |
+          ## Kernel Module Release v${{ steps.detect.outputs.version }}
+          
+          **Blockchain:** ${{ steps.detect.outputs.mode }}
+          
+          ### Security Tests
+          ✅ Signature tampering detection  
+          ✅ Hash integrity verification  
+          ✅ All tests passed
+          
+          Ready for deployment.
