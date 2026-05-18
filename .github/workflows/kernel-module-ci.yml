@@ -37,8 +37,8 @@ jobs:
       with:
         python-version: '3.11'
     
-    - name: Install liboqs-python
-      run: pip install liboqs-python
+    - name: Install dilithium-py
+      run: pip install dilithium-py
     
     - name: Run signature tampering test
       run: |
@@ -46,7 +46,7 @@ jobs:
         import sys
         import hashlib
         from pathlib import Path
-        import oqs
+        from dilithium_py.dilithium import Dilithium2
         
         def sha3_256_file(path):
             return hashlib.sha3_256(path.read_bytes()).digest()
@@ -59,37 +59,30 @@ jobs:
             sys.exit(1)
         
         print("Testing signature tampering detection...")
-        alg = "Dilithium3"  # liboqs-python uses Dilithium3, not Dilithium2
         
-        with oqs.Signature(alg) as s:
-            pk = s.generate_keypair()
-            sk = s.export_secret_key()
-        
+        # Generate keypair
+        pk, sk = Dilithium2.keygen()
         artifact_hash = sha3_256_file(module)
         print(f"✓ Hash: {artifact_hash.hex()[:32]}...")
         
-        with oqs.Signature(alg, secret_key=sk) as s:
-            signature = s.sign(artifact_hash)
+        # Sign
+        signature = Dilithium2.sign(sk, artifact_hash)
         print(f"✓ Signature: {len(signature)} bytes")
         
-        with oqs.Signature(alg) as verifier:
-            if verifier.verify(artifact_hash, signature, pk):
-                print("✓ Valid signature accepted")
-            else:
-                print("❌ FAIL: Valid signature rejected")
-                sys.exit(1)
+        # Verify valid signature
+        if Dilithium2.verify(pk, artifact_hash, signature):
+            print("✓ Valid signature accepted")
+        else:
+            print("❌ FAIL: Valid signature rejected")
+            sys.exit(1)
         
+        # Test tampered signature
         tampered_sig = bytearray(signature)
         tampered_sig[100] ^= 0xFF
         
-        try:
-            with oqs.Signature(alg) as verifier:
-                result = verifier.verify(artifact_hash, bytes(tampered_sig), pk)
-                if result:
-                    print("❌ FAIL: Tampered signature accepted")
-                    sys.exit(1)
-        except:
-            pass
+        if Dilithium2.verify(pk, artifact_hash, bytes(tampered_sig)):
+            print("❌ FAIL: Tampered signature accepted")
+            sys.exit(1)
         
         print("✅ PASS: Signature tampering detection works")
         PYEOF
