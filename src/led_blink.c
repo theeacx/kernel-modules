@@ -67,3 +67,4 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Thea");
 MODULE_DESCRIPTION("Raspberry Pi LED blink kernel module");
 /* v2 */
+
