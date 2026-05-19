@@ -46,7 +46,7 @@ jobs:
     - name: Run cppcheck static analysis
       run: |
         echo "Running cppcheck static analysis..."
-        cppcheck --enable=all \
+        cppcheck --enable=all --suppress=missingIncludeSystem --error-exitcode=1 --force src/led_blink.c
           --suppress=missingIncludeSystem \
           
           --error-exitcode=1 \
@@ -152,3 +152,4 @@ jobs:
           ✅ Thread lifecycle verification
 
           Ready for deployment.
+
