@@ -13,9 +13,9 @@ static int blink_fn(void *data)
 {
     while (!kthread_should_stop()) {
         gpio_set_value(GPIO_LED, 1);
-        msleep(500);
+        msleep(300);
         gpio_set_value(GPIO_LED, 0);
-        msleep(500);
+        msleep(300);
     }
     gpio_set_value(GPIO_LED, 0);
     return 0;
