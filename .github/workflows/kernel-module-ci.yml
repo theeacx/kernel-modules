@@ -24,9 +24,7 @@ jobs:
 
     - name: Shallow clone Raspberry Pi kernel
       run: |
-        git clone --depth=1 --branch rpi-6.12.y \
-          https://github.com/raspberrypi/linux \
-          rpi-linux
+        git clone --depth=1 --branch rpi-6.12.y https://github.com/raspberrypi/linux rpi-linux
         echo "✓ Kernel source cloned"
 
     - name: Prepare kernel headers
@@ -46,20 +44,13 @@ jobs:
     - name: Run cppcheck static analysis
       run: |
         echo "Running cppcheck static analysis..."
-        cppcheck --enable=all --suppress=missingIncludeSystem --error-exitcode=1 --force src/led_blink.c
-          --suppress=missingIncludeSystem \
-          
-          --error-exitcode=1 \
-          --force \
-          src/led_blink.c
+        cppcheck --suppress=missingIncludeSystem --error-exitcode=1 --force src/led_blink.c
         echo "✅ PASS: cppcheck found no critical issues"
 
     - name: Run kernel checkpatch
       run: |
         echo "Running kernel checkpatch.pl..."
-        perl rpi-linux/scripts/checkpatch.pl \
-          --no-tree \
-          --file src/led_blink.c || true
+        perl rpi-linux/scripts/checkpatch.pl --no-tree --file src/led_blink.c || true
         echo "✅ Checkpatch complete"
 
     - name: Check for dangerous patterns
@@ -71,25 +62,20 @@ jobs:
         source = Path("src/led_blink.c").read_text()
         errors = []
 
-        # Check for dangerous functions
         dangerous = ["strcpy", "sprintf", "gets", "strcat", "scanf"]
         for fn in dangerous:
             if fn + "(" in source:
                 errors.append(f"❌ Dangerous function found: {fn}()")
 
-        # Check IS_ERR used with PTR_ERR
         if "PTR_ERR(" in source and "IS_ERR(" not in source:
             errors.append("❌ PTR_ERR used without IS_ERR check")
 
-        # Check MODULE_LICENSE exists
         if "MODULE_LICENSE" not in source:
             errors.append("❌ Missing MODULE_LICENSE")
 
-        # Check gpio_free exists if gpio_request used
         if "gpio_request" in source and "gpio_free" not in source:
             errors.append("❌ gpio_request without gpio_free (resource leak)")
 
-        # Check kthread_stop exists if kthread_run used
         if "kthread_run" in source and "kthread_stop" not in source:
             errors.append("❌ kthread_run without kthread_stop (thread leak)")
 
@@ -115,7 +101,7 @@ jobs:
           VERSION=$((LAST_VERSION + 1))
         fi
         echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "📦 Building version: $VERSION"
+        echo "📦 New version: $VERSION"
 
     - name: Prepare release files
       run: |
@@ -145,11 +131,10 @@ jobs:
 
           ### CI/CD Pipeline Steps
           ✅ Cross-compiled (aarch64-linux-gnu)
-          ✅ cppcheck static analysis (buffer overflows, memory leaks)
-          ✅ checkpatch.pl (kernel coding standards)
+          ✅ cppcheck static analysis
+          ✅ checkpatch.pl kernel coding standards
           ✅ Dangerous pattern detection
           ✅ Resource cleanup verification
           ✅ Thread lifecycle verification
 
           Ready for deployment.
-
