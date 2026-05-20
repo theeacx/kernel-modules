@@ -1,6 +1,5 @@
-C_FILES := $(wildcard *.c)
-obj-m := $(C_FILES:.c=.o)
 KDIR ?= $(HOME)/rpi-linux-6.12
+obj-m += led_blink.o
 
 all:
 	$(MAKE) -C $(KDIR) M=$(PWD) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KBUILD_MODPOST_WARN=1 modules
