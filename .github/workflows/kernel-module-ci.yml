@@ -39,7 +39,8 @@ jobs:
         cd src
         make KDIR=$GITHUB_WORKSPACE/rpi-linux ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KBUILD_MODPOST_WARN=1
         echo "✓ Module built successfully"
-        ls -la *.ko
+        find /home/runner/work -name "*.ko" 2>/dev/null || echo "NO KO FOUND ANYWHERE"
+        ls -la
 
     - name: Run cppcheck static analysis
       run: |
@@ -138,3 +139,4 @@ jobs:
           ✅ Thread lifecycle verification
 
           Ready for deployment.
+
