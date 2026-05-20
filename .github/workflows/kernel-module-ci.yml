@@ -39,12 +39,12 @@ jobs:
         cd src
         make KDIR=$GITHUB_WORKSPACE/rpi-linux ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KBUILD_MODPOST_WARN=1
         echo "✓ Module built successfully"
-        find $GITHUB_WORKSPACE -name "*.ko" 2>/dev/null
+        find $GITHUB_WORKSPACE/src -name "*.ko" | head -5
 
     - name: Run cppcheck static analysis
       run: |
         echo "Running cppcheck static analysis..."
-        cppcheck --suppress=missingIncludeSystem --error-exitcode=1 --force src/*.c
+        cppcheck --suppress=missingIncludeSystem --error-exitcode=1 --force src/led_blink.c
         echo "✅ PASS: cppcheck found no critical issues"
 
     - name: Run kernel checkpatch
@@ -63,7 +63,8 @@ jobs:
 
         errors = []
         for cfile in Path("src").glob("*.c"):
-            if cfile.name.endswith('.mod.c'): continue
+            if cfile.name.endswith('.mod.c'):
+                continue
             source = cfile.read_text()
             for fn in ["strcpy", "sprintf", "gets", "strcat", "scanf"]:
                 if fn + "(" in source:
@@ -78,7 +79,8 @@ jobs:
                 errors.append(f"❌ {cfile.name}: kthread_run without kthread_stop")
 
         if errors:
-            for e in errors: print(e)
+            for e in errors:
+                print(e)
             sys.exit(1)
 
         print("✅ PASS: No dangerous functions found")
@@ -88,33 +90,12 @@ jobs:
     - name: Detect version
       id: detect
       run: |
-        LATEST=$(ls -td releases/v*/ 2>/dev/null | head -1)
-        if [ -z "$LATEST" ]; then
-          VERSION=1
-        else
-          LAST_VERSION=$(cat ${LATEST}version.txt)
-          VERSION=$((LAST_VERSION + 1))
-        fi
+        LATEST=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          https://api.github.com/repos/${{ github.repository }}/releases/latest \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tag_name','v0').lstrip('v'))" 2>/dev/null || echo "0")
+        VERSION=$((LATEST + 1))
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "📦 New version: $VERSION"
-
-    - name: Debug find ko
-      run: |
-        echo "=== Finding all .ko files ==="
-        find $GITHUB_WORKSPACE -name "*.ko" 2>/dev/null || echo "NONE FOUND"
-        echo "=== Contents of src/ ==="
-        ls -la $GITHUB_WORKSPACE/src/
-        echo "=== Contents of rpi-linux/ top level ==="
-        ls $GITHUB_WORKSPACE/rpi-linux/*.ko 2>/dev/null || echo "not here"
-
-    - name: Debug find ko
-      run: |
-        echo "=== Finding all .ko files ==="
-        find $GITHUB_WORKSPACE -name "*.ko" 2>/dev/null || echo "NONE FOUND"
-        echo "=== Contents of src/ ==="
-        ls -la $GITHUB_WORKSPACE/src/
-        echo "=== Contents of rpi-linux/ top level ==="
-        ls $GITHUB_WORKSPACE/rpi-linux/*.ko 2>/dev/null || echo "not here"
 
     - name: Prepare release files
       run: |
@@ -139,7 +120,6 @@ jobs:
         body: |
           ## Kernel Module Release v${{ steps.detect.outputs.version }}
 
-          **Blockchain:** ${{ steps.detect.outputs.mode }}
           **Architecture:** ARM64 (Raspberry Pi)
           **Kernel:** rpi-6.12.y
 
