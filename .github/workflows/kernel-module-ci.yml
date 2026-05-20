@@ -63,6 +63,7 @@ jobs:
 
         errors = []
         for cfile in Path("src").glob("*.c"):
+            if cfile.name.endswith('.mod.c'): continue
             source = cfile.read_text()
             for fn in ["strcpy", "sprintf", "gets", "strcat", "scanf"]:
                 if fn + "(" in source:
