@@ -39,8 +39,7 @@ jobs:
         cd src
         make KDIR=$GITHUB_WORKSPACE/rpi-linux ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KBUILD_MODPOST_WARN=1
         echo "✓ Module built successfully"
-        find /home/runner/work -name "*.ko" 2>/dev/null || echo "NO KO FOUND ANYWHERE"
-        ls -la
+        find $GITHUB_WORKSPACE -name "*.ko" 2>/dev/null
 
     - name: Run cppcheck static analysis
       run: |
@@ -51,7 +50,9 @@ jobs:
     - name: Run kernel checkpatch
       run: |
         echo "Running kernel checkpatch.pl..."
-        perl rpi-linux/scripts/checkpatch.pl --no-tree --file src/*.c || true
+        for f in src/*.c; do
+          perl rpi-linux/scripts/checkpatch.pl --no-tree --file $f || true
+        done
         echo "✅ Checkpatch complete"
 
     - name: Check for dangerous patterns
@@ -60,35 +61,27 @@ jobs:
         import sys
         from pathlib import Path
 
-        source = Path("src/led_blink.c").read_text()
         errors = []
-
-        dangerous = ["strcpy", "sprintf", "gets", "strcat", "scanf"]
-        for fn in dangerous:
-            if fn + "(" in source:
-                errors.append(f"❌ Dangerous function found: {fn}()")
-
-        if "PTR_ERR(" in source and "IS_ERR(" not in source:
-            errors.append("❌ PTR_ERR used without IS_ERR check")
-
-        if "MODULE_LICENSE" not in source:
-            errors.append("❌ Missing MODULE_LICENSE")
-
-        if "gpio_request" in source and "gpio_free" not in source:
-            errors.append("❌ gpio_request without gpio_free (resource leak)")
-
-        if "kthread_run" in source and "kthread_stop" not in source:
-            errors.append("❌ kthread_run without kthread_stop (thread leak)")
+        for cfile in Path("src").glob("*.c"):
+            source = cfile.read_text()
+            for fn in ["strcpy", "sprintf", "gets", "strcat", "scanf"]:
+                if fn + "(" in source:
+                    errors.append(f"❌ {cfile.name}: Dangerous function {fn}()")
+            if "PTR_ERR(" in source and "IS_ERR(" not in source:
+                errors.append(f"❌ {cfile.name}: PTR_ERR without IS_ERR")
+            if "MODULE_LICENSE" not in source:
+                errors.append(f"❌ {cfile.name}: Missing MODULE_LICENSE")
+            if "gpio_request" in source and "gpio_free" not in source:
+                errors.append(f"❌ {cfile.name}: gpio_request without gpio_free")
+            if "kthread_run" in source and "kthread_stop" not in source:
+                errors.append(f"❌ {cfile.name}: kthread_run without kthread_stop")
 
         if errors:
-            for e in errors:
-                print(e)
+            for e in errors: print(e)
             sys.exit(1)
 
         print("✅ PASS: No dangerous functions found")
-        print("✅ PASS: Proper error handling detected")
         print("✅ PASS: Resource cleanup verified")
-        print("✅ PASS: Thread lifecycle management verified")
         PYEOF
 
     - name: Detect version
@@ -108,7 +101,9 @@ jobs:
       run: |
         VERSION=${{ steps.detect.outputs.version }}
         mkdir -p releases/v${VERSION}
-        KO=$(ls src/*.ko | head -1) && cp $KO releases/v${VERSION}/module.ko
+        KO_FILE=$(find $GITHUB_WORKSPACE/src -name "*.ko" | head -1)
+        echo "Found .ko at: $KO_FILE"
+        cp $KO_FILE releases/v${VERSION}/module.ko
         echo "${VERSION}" > releases/v${VERSION}/version.txt
         cp src/mode.txt releases/v${VERSION}/mode.txt
         echo "✓ Release files prepared for v${VERSION}"
@@ -117,7 +112,7 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: v${{ steps.detect.outputs.version }}
-        name: Kernel Module v${{ steps.detect.outputs.version }} (ethereum)
+        name: Kernel Module v${{ steps.detect.outputs.version }}
         files: |
           releases/v${{ steps.detect.outputs.version }}/module.ko
           releases/v${{ steps.detect.outputs.version }}/version.txt
@@ -125,19 +120,15 @@ jobs:
         body: |
           ## Kernel Module Release v${{ steps.detect.outputs.version }}
 
-          **Built from:** `src/led_blink.c`
-          **Blockchain:** ethereum
+          **Blockchain:** ${{ steps.detect.outputs.mode }}
           **Architecture:** ARM64 (Raspberry Pi)
           **Kernel:** rpi-6.12.y
 
-          ### CI/CD Pipeline Steps
+          ### CI/CD Pipeline
           ✅ Cross-compiled (aarch64-linux-gnu)
           ✅ cppcheck static analysis
-          ✅ checkpatch.pl kernel coding standards
+          ✅ checkpatch.pl
           ✅ Dangerous pattern detection
           ✅ Resource cleanup verification
-          ✅ Thread lifecycle verification
 
           Ready for deployment.
-
-
