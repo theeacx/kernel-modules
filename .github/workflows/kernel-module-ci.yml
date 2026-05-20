@@ -106,6 +106,15 @@ jobs:
         echo "=== Contents of rpi-linux/ top level ==="
         ls $GITHUB_WORKSPACE/rpi-linux/*.ko 2>/dev/null || echo "not here"
 
+    - name: Debug find ko
+      run: |
+        echo "=== Finding all .ko files ==="
+        find $GITHUB_WORKSPACE -name "*.ko" 2>/dev/null || echo "NONE FOUND"
+        echo "=== Contents of src/ ==="
+        ls -la $GITHUB_WORKSPACE/src/
+        echo "=== Contents of rpi-linux/ top level ==="
+        ls $GITHUB_WORKSPACE/rpi-linux/*.ko 2>/dev/null || echo "not here"
+
     - name: Prepare release files
       run: |
         VERSION=${{ steps.detect.outputs.version }}
