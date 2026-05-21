@@ -3,37 +3,54 @@ name: Kernel Module Security Tests and Release
 on:
   push:
     paths:
-      - 'releases/**'
+      - 'src/**'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  test-and-release:
+  build-and-test:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Detect new release
-      id: detect
+    - name: Install dependencies
       run: |
-        LATEST=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-          https://api.github.com/repos/${{ github.repository }}/releases/latest \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tag_name','v0').lstrip('v'))" 2>/dev/null || echo "0")
-        VERSION=$((LATEST + 1))
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "📦 New version: $VERSION"
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu make bc bison flex libssl-dev libelf-dev cppcheck
 
-    - name: Find module
-      id: find
+    - name: Clone exact Pi kernel version
       run: |
-        LATEST_DIR=$(ls -td releases/v*/ 2>/dev/null | head -1)
-        echo "dir=$LATEST_DIR" >> $GITHUB_OUTPUT
-        echo "Found: $LATEST_DIR"
-        ls -la $LATEST_DIR
+        git clone --depth=1 --branch 1.20250311 https://github.com/raspberrypi/firmware rpi-firmware
+        wget -q https://raw.githubusercontent.com/RPi-Distro/rpi-source/master/rpi-source
+        chmod +x rpi-source
+        # Get exact kernel source matching 6.12.75+rpt-rpi-v8
+        git clone https://github.com/raspberrypi/linux rpi-linux
+        cd rpi-linux
+        git checkout $(curl -s https://raw.githubusercontent.com/raspberrypi/firmware/1.20250311/extra/git_hash)
+        cd ..
+        echo "✓ Exact kernel source cloned"
+
+    - name: Prepare kernel headers
+      run: |
+        cp src/kernel.config rpi-linux/.config
+        cd rpi-linux
+        make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules_prepare -j$(nproc)
+        echo "✓ Kernel headers prepared"
+
+    - name: Build kernel module
+      run: |
+        cd src
+        make KDIR=$GITHUB_WORKSPACE/rpi-linux ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KBUILD_MODPOST_WARN=1
+        echo "✓ Module built"
+        find $GITHUB_WORKSPACE/src -name "*.ko"
+
+    - name: Check vermagic
+      run: |
+        modinfo $(find $GITHUB_WORKSPACE/src -name "*.ko" | head -1) | grep vermagic
 
     - name: Setup Python
       uses: actions/setup-python@v5
@@ -46,12 +63,10 @@ jobs:
     - name: Run hash integrity test
       run: |
         python3 << 'PYEOF'
-        import sys
-        import hashlib
-        import tempfile
+        import sys, hashlib, tempfile
         from pathlib import Path
 
-        module = Path("${{ steps.find.outputs.dir }}module.ko")
+        module = next(Path("src").glob("*.ko"))
         print(f"Testing: {module}")
 
         def sha3_256_file(path):
@@ -72,7 +87,7 @@ jobs:
         tmp_path.unlink()
 
         if original_hash == tampered_hash:
-            print("❌ FAIL: Hashes identical despite tampering")
+            print("❌ FAIL")
             sys.exit(1)
 
         print("✅ PASS: Hash integrity verification works")
@@ -81,27 +96,20 @@ jobs:
     - name: Run signature tampering test
       run: |
         python3 << 'PYEOF'
-        import sys
-        import hashlib
+        import sys, hashlib
         from pathlib import Path
         from dilithium_py.dilithium import Dilithium2
+
+        module = next(Path("src").glob("*.ko"))
 
         def sha3_256_file(path):
             return hashlib.sha3_256(path.read_bytes()).digest()
 
-        module = Path("${{ steps.find.outputs.dir }}module.ko")
-
-        print("Testing signature tampering detection...")
         pk, sk = Dilithium2.keygen()
         artifact_hash = sha3_256_file(module)
-        print(f"✓ Hash: {artifact_hash.hex()[:32]}...")
-
         signature = Dilithium2.sign(sk, artifact_hash)
-        print(f"✓ Signature: {len(signature)} bytes")
 
-        if Dilithium2.verify(pk, artifact_hash, signature):
-            print("✓ Valid signature accepted")
-        else:
+        if not Dilithium2.verify(pk, artifact_hash, signature):
             print("❌ FAIL: Valid signature rejected")
             sys.exit(1)
 
@@ -115,23 +123,40 @@ jobs:
         print("✅ PASS: Signature tampering detection works")
         PYEOF
 
+    - name: Detect version
+      id: detect
+      run: |
+        LATEST=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          https://api.github.com/repos/${{ github.repository }}/releases/latest \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('tag_name','v0').lstrip('v'))" 2>/dev/null || echo "0")
+        VERSION=$((LATEST + 1))
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "📦 New version: $VERSION"
+
+    - name: Prepare release files
+      run: |
+        VERSION=${{ steps.detect.outputs.version }}
+        mkdir -p releases/v${VERSION}
+        KO_FILE=$(find $GITHUB_WORKSPACE/src -name "*.ko" | head -1)
+        cp $KO_FILE releases/v${VERSION}/module.ko
+        echo "${VERSION}" > releases/v${VERSION}/version.txt
+        cp src/mode.txt releases/v${VERSION}/mode.txt
+        echo "✓ Release v${VERSION} prepared"
+
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
         tag_name: v${{ steps.detect.outputs.version }}
         name: Kernel Module v${{ steps.detect.outputs.version }}
         files: |
-          ${{ steps.find.outputs.dir }}module.ko
-          ${{ steps.find.outputs.dir }}version.txt
-          ${{ steps.find.outputs.dir }}mode.txt
+          releases/v${{ steps.detect.outputs.version }}/module.ko
+          releases/v${{ steps.detect.outputs.version }}/version.txt
+          releases/v${{ steps.detect.outputs.version }}/mode.txt
         body: |
           ## Kernel Module Release v${{ steps.detect.outputs.version }}
-
           **Architecture:** ARM64 (Raspberry Pi)
-          **Kernel:** 6.12.79-v8+
-
+          **Kernel:** 6.12.75+rpt-rpi-v8
           ### Security Tests
           ✅ Hash integrity verification
           ✅ Signature tampering detection
-
           Ready for deployment.
