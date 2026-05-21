@@ -36,9 +36,9 @@ jobs:
 
     - name: Build kernel module
       run: |
-        sudo ln -sf /usr/src/linux-kbuild-6.12.75+rpt /usr/src/linux-headers-6.12.75+rpt-common-rpi/scripts_link
-        sudo cp -r /usr/src/linux-kbuild-6.12.75+rpt/scripts/* /usr/src/linux-headers-6.12.75+rpt-common-rpi/scripts/ 2>/dev/null || true
-        sudo cp -r /usr/src/linux-kbuild-6.12.75+rpt/tools/* /usr/src/linux-headers-6.12.75+rpt-common-rpi/tools/ 2>/dev/null || true
+        sudo ln -sf /usr/src/linux-kbuild-6.12.75+rpt/scripts /usr/src/linux-headers-6.12.75+rpt-common-rpi/scripts
+        sudo ln -sf /usr/src/linux-kbuild-6.12.75+rpt/tools /usr/src/linux-headers-6.12.75+rpt-common-rpi/tools
+        ls /usr/src/linux-headers-6.12.75+rpt-common-rpi/scripts/Makefile.extrawarn
         cd src
         make KDIR=/usr/src/linux-headers-6.12.75+rpt-common-rpi ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KBUILD_MODPOST_WARN=1
         echo "✓ Module built"
