@@ -22,24 +22,12 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y gcc-aarch64-linux-gnu make bc bison flex libssl-dev libelf-dev cppcheck
 
-    - name: Clone exact Pi kernel version
+    - name: Extract Pi kernel headers
       run: |
-        git clone --depth=1 --branch 1.20250311 https://github.com/raspberrypi/firmware rpi-firmware
-        wget -q https://raw.githubusercontent.com/RPi-Distro/rpi-source/master/rpi-source
-        chmod +x rpi-source
-        # Get exact kernel source matching 6.12.75+rpt-rpi-v8
-        git clone https://github.com/raspberrypi/linux rpi-linux
-        cd rpi-linux
-        git checkout $(curl -s https://raw.githubusercontent.com/raspberrypi/firmware/1.20250311/extra/git_hash)
-        cd ..
-        echo "✓ Exact kernel source cloned"
-
-    - name: Prepare kernel headers
-      run: |
-        cp src/kernel.config rpi-linux/.config
-        cd rpi-linux
-        make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules_prepare -j$(nproc)
-        echo "✓ Kernel headers prepared"
+        sudo mkdir -p /usr/src
+        sudo tar -xzf rpi-headers-6.12.75.tar.gz -C /
+        echo "✓ Pi kernel headers extracted"
+        ls /usr/src/ | grep 6.12.75
 
     - name: Build kernel module
       run: |
@@ -51,6 +39,37 @@ jobs:
     - name: Check vermagic
       run: |
         modinfo $(find $GITHUB_WORKSPACE/src -name "*.ko" | head -1) | grep vermagic
+
+    - name: Run cppcheck
+      run: |
+        cppcheck --suppress=missingIncludeSystem --error-exitcode=1 --force src/led_on.c
+        echo "✅ PASS: cppcheck"
+
+    - name: Check dangerous patterns
+      run: |
+        python3 << 'PYEOF'
+        import sys
+        from pathlib import Path
+
+        errors = []
+        for cfile in Path("src").glob("*.c"):
+            if cfile.name.endswith('.mod.c'):
+                continue
+            source = cfile.read_text()
+            for fn in ["strcpy", "sprintf", "gets", "strcat", "scanf"]:
+                if fn + "(" in source:
+                    errors.append(f"❌ {cfile.name}: Dangerous function {fn}()")
+            if "MODULE_LICENSE" not in source:
+                errors.append(f"❌ {cfile.name}: Missing MODULE_LICENSE")
+            if "gpio_request" in source and "gpio_free" not in source:
+                errors.append(f"❌ {cfile.name}: gpio_request without gpio_free")
+
+        if errors:
+            for e in errors: print(e)
+            sys.exit(1)
+
+        print("✅ PASS: No dangerous patterns found")
+        PYEOF
 
     - name: Setup Python
       uses: actions/setup-python@v5
@@ -157,6 +176,7 @@ jobs:
           **Architecture:** ARM64 (Raspberry Pi)
           **Kernel:** 6.12.75+rpt-rpi-v8
           ### Security Tests
+          ✅ cppcheck static analysis
           ✅ Hash integrity verification
           ✅ Signature tampering detection
           Ready for deployment.
