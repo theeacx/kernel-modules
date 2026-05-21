@@ -20,7 +20,8 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-aarch64-linux-gnu make bc bison flex libssl-dev libelf-dev cppcheck
+        sudo apt-get install -y gcc-12-aarch64-linux-gnu make bc bison flex libssl-dev libelf-dev cppcheck
+        sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc-12 /usr/local/bin/aarch64-linux-gnu-gcc
 
     - name: Shallow clone Raspberry Pi kernel
       run: |
