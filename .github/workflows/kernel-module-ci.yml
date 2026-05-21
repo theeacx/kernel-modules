@@ -20,39 +20,27 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-aarch64-linux-gnu make bc bison flex libssl-dev libelf-dev cppcheck
+        sudo apt-get install -y gcc-aarch64-linux-gnu make cppcheck
 
-    - name: Extract Pi kernel headers
+    - name: Extract kernel headers
       run: |
-        echo "=== Tarball contents ==="
-        tar -tzf rpi-headers-6.12.75.tar.gz | head -20
-        echo "=== Extracting ==="
-        sudo mkdir -p /usr/src
-        sudo tar -xzf rpi-headers-6.12.75.tar.gz -C /usr/src
-        echo "=== Result ==="
-        ls /usr/src/ || true
-        ls /usr/src/linux-kbuild-6.12.75+rpt/scripts/ 2>/dev/null || echo "kbuild not here"
-        find /usr/src -name "Makefile.extrawarn" 2>/dev/null || echo "extrawarn not found"
+        mkdir -p rpi-headers
+        tar -xzf rpi-build-headers.tar.gz -C rpi-headers
+        echo "✓ Kernel headers extracted"
 
     - name: Build kernel module
       run: |
-        sudo ln -sf /usr/src/linux-kbuild-6.12.75+rpt/scripts /usr/src/linux-headers-6.12.75+rpt-common-rpi/scripts
-        sudo ln -sf /usr/src/linux-kbuild-6.12.75+rpt/tools /usr/src/linux-headers-6.12.75+rpt-common-rpi/tools
-        cd /usr/src/linux-headers-6.12.75+rpt-common-rpi
-        sudo cp $GITHUB_WORKSPACE/src/kernel.config .config
-        sudo make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
-        sudo make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules_prepare
-        cd $GITHUB_WORKSPACE/src
-        make KDIR=/usr/src/linux-headers-6.12.75+rpt-common-rpi ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KBUILD_MODPOST_WARN=1
+        cd src
+        make KDIR=$GITHUB_WORKSPACE/rpi-headers ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KBUILD_MODPOST_WARN=1
         echo "✓ Module built"
-        find $GITHUB_WORKSPACE/src -name "*.ko"
+        find . -name "*.ko"
 
     - name: Check vermagic
-      run: modinfo $(find $GITHUB_WORKSPACE/src -name "*.ko" | head -1) | grep vermagic
+      run: modinfo $(find src -name "*.ko" | head -1) | grep vermagic
 
     - name: Run cppcheck
       run: |
-        cppcheck --suppress=missingIncludeSystem --error-exitcode=1 --force src/led_on.c
+        cppcheck --suppress=missingIncludeSystem --error-exitcode=1 --force src/*.c
         echo "✅ PASS: cppcheck"
 
     - name: Check dangerous patterns
@@ -142,7 +130,7 @@ jobs:
       run: |
         VERSION=${{ steps.detect.outputs.version }}
         mkdir -p releases/v${VERSION}
-        KO_FILE=$(find $GITHUB_WORKSPACE/src -name "*.ko" | head -1)
+        KO_FILE=$(find src -name "*.ko" | head -1)
         cp $KO_FILE releases/v${VERSION}/module.ko
         echo "${VERSION}" > releases/v${VERSION}/version.txt
         cp src/mode.txt releases/v${VERSION}/mode.txt
@@ -159,9 +147,11 @@ jobs:
         body: |
           ## Kernel Module Release v${{ steps.detect.outputs.version }}
           **Architecture:** ARM64 (Raspberry Pi)
-          **Kernel:** 6.12.75+rpt-rpi-v8
-          ### Security Tests
+          **Kernel:** 6.12.79-v8+
+          ### CI/CD Pipeline
+          ✅ Cross-compiled (aarch64-linux-gnu)
           ✅ cppcheck static analysis
+          ✅ Dangerous pattern detection
           ✅ Hash integrity verification
           ✅ Signature tampering detection
           Ready for deployment.
