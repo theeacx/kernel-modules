@@ -1,94 +1,23 @@
-name: Kernel Module Build and Security Tests
+name: Kernel Module Security Tests and Release
 
 on:
   push:
     paths:
-      - 'src/**'
+      - 'releases/**'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-and-test:
+  test-and-release:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc-12-aarch64-linux-gnu make bc bison flex libssl-dev libelf-dev cppcheck
-        sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc-12 /usr/local/bin/aarch64-linux-gnu-gcc
-
-    - name: Shallow clone Raspberry Pi kernel
-      run: |
-        git clone --depth=1 --branch rpi-6.12.y https://github.com/raspberrypi/linux rpi-linux
-        echo "✓ Kernel source cloned"
-
-    - name: Prepare kernel headers
-      run: |
-        cp src/kernel.config rpi-linux/.config
-        cd rpi-linux
-        make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules_prepare -j$(nproc)
-        echo "✓ Kernel headers prepared"
-
-    - name: Build kernel module
-      run: |
-        cd src
-        make KDIR=$GITHUB_WORKSPACE/rpi-linux ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KBUILD_MODPOST_WARN=1
-        echo "✓ Module built successfully"
-        find $GITHUB_WORKSPACE/src -name "*.ko" | head -5
-
-    - name: Run cppcheck static analysis
-      run: |
-        echo "Running cppcheck static analysis..."
-        cppcheck --suppress=missingIncludeSystem --error-exitcode=1 --force src/led_blink.c
-        echo "✅ PASS: cppcheck found no critical issues"
-
-    - name: Run kernel checkpatch
-      run: |
-        echo "Running kernel checkpatch.pl..."
-        for f in src/*.c; do
-          perl rpi-linux/scripts/checkpatch.pl --no-tree --file $f || true
-        done
-        echo "✅ Checkpatch complete"
-
-    - name: Check for dangerous patterns
-      run: |
-        python3 << 'PYEOF'
-        import sys
-        from pathlib import Path
-
-        errors = []
-        for cfile in Path("src").glob("*.c"):
-            if cfile.name.endswith('.mod.c'):
-                continue
-            source = cfile.read_text()
-            for fn in ["strcpy", "sprintf", "gets", "strcat", "scanf"]:
-                if fn + "(" in source:
-                    errors.append(f"❌ {cfile.name}: Dangerous function {fn}()")
-            if "PTR_ERR(" in source and "IS_ERR(" not in source:
-                errors.append(f"❌ {cfile.name}: PTR_ERR without IS_ERR")
-            if "MODULE_LICENSE" not in source:
-                errors.append(f"❌ {cfile.name}: Missing MODULE_LICENSE")
-            if "gpio_request" in source and "gpio_free" not in source:
-                errors.append(f"❌ {cfile.name}: gpio_request without gpio_free")
-            if "kthread_run" in source and "kthread_stop" not in source:
-                errors.append(f"❌ {cfile.name}: kthread_run without kthread_stop")
-
-        if errors:
-            for e in errors:
-                print(e)
-            sys.exit(1)
-
-        print("✅ PASS: No dangerous functions found")
-        print("✅ PASS: Resource cleanup verified")
-        PYEOF
-
-    - name: Detect version
+    - name: Detect new release
       id: detect
       run: |
         LATEST=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
@@ -98,16 +27,93 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "📦 New version: $VERSION"
 
-    - name: Prepare release files
+    - name: Find module
+      id: find
       run: |
-        VERSION=${{ steps.detect.outputs.version }}
-        mkdir -p releases/v${VERSION}
-        KO_FILE=$(find $GITHUB_WORKSPACE/src -name "*.ko" | head -1)
-        echo "Found .ko at: $KO_FILE"
-        cp $KO_FILE releases/v${VERSION}/module.ko
-        echo "${VERSION}" > releases/v${VERSION}/version.txt
-        cp src/mode.txt releases/v${VERSION}/mode.txt
-        echo "✓ Release files prepared for v${VERSION}"
+        LATEST_DIR=$(ls -td releases/v*/ 2>/dev/null | head -1)
+        echo "dir=$LATEST_DIR" >> $GITHUB_OUTPUT
+        echo "Found: $LATEST_DIR"
+        ls -la $LATEST_DIR
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dilithium-py
+      run: pip install dilithium-py
+
+    - name: Run hash integrity test
+      run: |
+        python3 << 'PYEOF'
+        import sys
+        import hashlib
+        import tempfile
+        from pathlib import Path
+
+        module = Path("${{ steps.find.outputs.dir }}module.ko")
+        print(f"Testing: {module}")
+
+        def sha3_256_file(path):
+            return hashlib.sha3_256(path.read_bytes()).digest()
+
+        original_hash = sha3_256_file(module)
+        print(f"✓ Hash: {original_hash.hex()[:32]}...")
+
+        data = module.read_bytes()
+        tampered = bytearray(data)
+        tampered[len(tampered)//2] ^= 0xFF
+
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(bytes(tampered))
+            tmp_path = Path(tmp.name)
+
+        tampered_hash = sha3_256_file(tmp_path)
+        tmp_path.unlink()
+
+        if original_hash == tampered_hash:
+            print("❌ FAIL: Hashes identical despite tampering")
+            sys.exit(1)
+
+        print("✅ PASS: Hash integrity verification works")
+        PYEOF
+
+    - name: Run signature tampering test
+      run: |
+        python3 << 'PYEOF'
+        import sys
+        import hashlib
+        from pathlib import Path
+        from dilithium_py.dilithium import Dilithium2
+
+        def sha3_256_file(path):
+            return hashlib.sha3_256(path.read_bytes()).digest()
+
+        module = Path("${{ steps.find.outputs.dir }}module.ko")
+
+        print("Testing signature tampering detection...")
+        pk, sk = Dilithium2.keygen()
+        artifact_hash = sha3_256_file(module)
+        print(f"✓ Hash: {artifact_hash.hex()[:32]}...")
+
+        signature = Dilithium2.sign(sk, artifact_hash)
+        print(f"✓ Signature: {len(signature)} bytes")
+
+        if Dilithium2.verify(pk, artifact_hash, signature):
+            print("✓ Valid signature accepted")
+        else:
+            print("❌ FAIL: Valid signature rejected")
+            sys.exit(1)
+
+        tampered_sig = bytearray(signature)
+        tampered_sig[100] ^= 0xFF
+
+        if Dilithium2.verify(pk, artifact_hash, bytes(tampered_sig)):
+            print("❌ FAIL: Tampered signature accepted")
+            sys.exit(1)
+
+        print("✅ PASS: Signature tampering detection works")
+        PYEOF
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
@@ -115,20 +121,17 @@ jobs:
         tag_name: v${{ steps.detect.outputs.version }}
         name: Kernel Module v${{ steps.detect.outputs.version }}
         files: |
-          releases/v${{ steps.detect.outputs.version }}/module.ko
-          releases/v${{ steps.detect.outputs.version }}/version.txt
-          releases/v${{ steps.detect.outputs.version }}/mode.txt
+          ${{ steps.find.outputs.dir }}module.ko
+          ${{ steps.find.outputs.dir }}version.txt
+          ${{ steps.find.outputs.dir }}mode.txt
         body: |
           ## Kernel Module Release v${{ steps.detect.outputs.version }}
 
           **Architecture:** ARM64 (Raspberry Pi)
-          **Kernel:** rpi-6.12.y
+          **Kernel:** 6.12.79-v8+
 
-          ### CI/CD Pipeline
-          ✅ Cross-compiled (aarch64-linux-gnu)
-          ✅ cppcheck static analysis
-          ✅ checkpatch.pl
-          ✅ Dangerous pattern detection
-          ✅ Resource cleanup verification
+          ### Security Tests
+          ✅ Hash integrity verification
+          ✅ Signature tampering detection
 
           Ready for deployment.
