@@ -1,4 +1,4 @@
-name: Kernel Module Security Tests and Release
+name: Kernel Module Build and Security Tests
 
 on:
   push:
@@ -24,21 +24,28 @@ jobs:
 
     - name: Extract Pi kernel headers
       run: |
+        echo "=== Tarball contents ==="
+        tar -tzf rpi-headers-6.12.75.tar.gz | head -20
+        echo "=== Extracting ==="
         sudo mkdir -p /usr/src
-        sudo tar -xzf rpi-headers-6.12.75.tar.gz -C /
-        echo "✓ Pi kernel headers extracted"
-        ls /usr/src/ | grep 6.12.75
+        sudo tar -xzf rpi-headers-6.12.75.tar.gz -C /usr/src
+        echo "=== Result ==="
+        ls /usr/src/ || true
+        ls /usr/src/linux-kbuild-6.12.75+rpt/scripts/ 2>/dev/null || echo "kbuild not here"
+        find /usr/src -name "Makefile.extrawarn" 2>/dev/null || echo "extrawarn not found"
 
     - name: Build kernel module
       run: |
+        sudo ln -sf /usr/src/linux-kbuild-6.12.75+rpt /usr/src/linux-headers-6.12.75+rpt-common-rpi/scripts_link
+        sudo cp -r /usr/src/linux-kbuild-6.12.75+rpt/scripts/* /usr/src/linux-headers-6.12.75+rpt-common-rpi/scripts/ 2>/dev/null || true
+        sudo cp -r /usr/src/linux-kbuild-6.12.75+rpt/tools/* /usr/src/linux-headers-6.12.75+rpt-common-rpi/tools/ 2>/dev/null || true
         cd src
         make KDIR=/usr/src/linux-headers-6.12.75+rpt-common-rpi ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KBUILD_MODPOST_WARN=1
         echo "✓ Module built"
         find $GITHUB_WORKSPACE/src -name "*.ko"
 
     - name: Check vermagic
-      run: |
-        modinfo $(find $GITHUB_WORKSPACE/src -name "*.ko" | head -1) | grep vermagic
+      run: modinfo $(find $GITHUB_WORKSPACE/src -name "*.ko" | head -1) | grep vermagic
 
     - name: Run cppcheck
       run: |
@@ -50,11 +57,9 @@ jobs:
         python3 << 'PYEOF'
         import sys
         from pathlib import Path
-
         errors = []
         for cfile in Path("src").glob("*.c"):
-            if cfile.name.endswith('.mod.c'):
-                continue
+            if cfile.name.endswith('.mod.c'): continue
             source = cfile.read_text()
             for fn in ["strcpy", "sprintf", "gets", "strcat", "scanf"]:
                 if fn + "(" in source:
@@ -63,11 +68,9 @@ jobs:
                 errors.append(f"❌ {cfile.name}: Missing MODULE_LICENSE")
             if "gpio_request" in source and "gpio_free" not in source:
                 errors.append(f"❌ {cfile.name}: gpio_request without gpio_free")
-
         if errors:
             for e in errors: print(e)
             sys.exit(1)
-
         print("✅ PASS: No dangerous patterns found")
         PYEOF
 
@@ -84,31 +87,20 @@ jobs:
         python3 << 'PYEOF'
         import sys, hashlib, tempfile
         from pathlib import Path
-
         module = next(Path("src").glob("*.ko"))
-        print(f"Testing: {module}")
-
         def sha3_256_file(path):
             return hashlib.sha3_256(path.read_bytes()).digest()
-
         original_hash = sha3_256_file(module)
-        print(f"✓ Hash: {original_hash.hex()[:32]}...")
-
         data = module.read_bytes()
         tampered = bytearray(data)
         tampered[len(tampered)//2] ^= 0xFF
-
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             tmp.write(bytes(tampered))
             tmp_path = Path(tmp.name)
-
         tampered_hash = sha3_256_file(tmp_path)
         tmp_path.unlink()
-
         if original_hash == tampered_hash:
-            print("❌ FAIL")
             sys.exit(1)
-
         print("✅ PASS: Hash integrity verification works")
         PYEOF
 
@@ -118,27 +110,18 @@ jobs:
         import sys, hashlib
         from pathlib import Path
         from dilithium_py.dilithium import Dilithium2
-
         module = next(Path("src").glob("*.ko"))
-
         def sha3_256_file(path):
             return hashlib.sha3_256(path.read_bytes()).digest()
-
         pk, sk = Dilithium2.keygen()
         artifact_hash = sha3_256_file(module)
         signature = Dilithium2.sign(sk, artifact_hash)
-
         if not Dilithium2.verify(pk, artifact_hash, signature):
-            print("❌ FAIL: Valid signature rejected")
             sys.exit(1)
-
         tampered_sig = bytearray(signature)
         tampered_sig[100] ^= 0xFF
-
         if Dilithium2.verify(pk, artifact_hash, bytes(tampered_sig)):
-            print("❌ FAIL: Tampered signature accepted")
             sys.exit(1)
-
         print("✅ PASS: Signature tampering detection works")
         PYEOF
 
@@ -160,7 +143,6 @@ jobs:
         cp $KO_FILE releases/v${VERSION}/module.ko
         echo "${VERSION}" > releases/v${VERSION}/version.txt
         cp src/mode.txt releases/v${VERSION}/mode.txt
-        echo "✓ Release v${VERSION} prepared"
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
