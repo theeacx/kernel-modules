@@ -44,7 +44,7 @@ jobs:
     - name: Build kernel module
       run: |
         cd src
-        make KDIR=$GITHUB_WORKSPACE/rpi-linux ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KBUILD_MODPOST_WARN=1
+        make KDIR=/usr/src/linux-headers-6.12.75+rpt-common-rpi ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KBUILD_MODPOST_WARN=1
         echo "✓ Module built"
         find $GITHUB_WORKSPACE/src -name "*.ko"
 
