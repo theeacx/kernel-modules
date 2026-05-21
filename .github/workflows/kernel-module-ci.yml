@@ -38,8 +38,11 @@ jobs:
       run: |
         sudo ln -sf /usr/src/linux-kbuild-6.12.75+rpt/scripts /usr/src/linux-headers-6.12.75+rpt-common-rpi/scripts
         sudo ln -sf /usr/src/linux-kbuild-6.12.75+rpt/tools /usr/src/linux-headers-6.12.75+rpt-common-rpi/tools
-        ls /usr/src/linux-headers-6.12.75+rpt-common-rpi/scripts/Makefile.extrawarn
-        cd src
+        cd /usr/src/linux-headers-6.12.75+rpt-common-rpi
+        sudo cp $GITHUB_WORKSPACE/src/kernel.config .config
+        sudo make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+        sudo make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules_prepare
+        cd $GITHUB_WORKSPACE/src
         make KDIR=/usr/src/linux-headers-6.12.75+rpt-common-rpi ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KBUILD_MODPOST_WARN=1
         echo "✓ Module built"
         find $GITHUB_WORKSPACE/src -name "*.ko"
