@@ -41,7 +41,3 @@ module_exit(led_on_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Thea");
 MODULE_DESCRIPTION("Raspberry Pi LED always ON kernel module");
-
-
- 
- 
