@@ -12,14 +12,14 @@ static void blink_callback(struct timer_list *t)
 {
     led_state = !led_state;
     gpio_set_value(GPIO_LED, led_state);
-    mod_timer(&blink_timer, jiffies + HZ);
+    mod_timer(&blink_timer, jiffies + 5 * HZ);
 }
 
 static int __init led_hbd_init(void)
 {
     int ret;
 
-    pr_info("led_hbd: init - blink every second\n");
+    pr_info("led_hbd: init - 5s on 5s off\n");
 
     ret = gpio_request(GPIO_LED, "led_gpio");
     if (ret) {
@@ -27,17 +27,18 @@ static int __init led_hbd_init(void)
         return ret;
     }
 
-    ret = gpio_direction_output(GPIO_LED, 0);
+    ret = gpio_direction_output(GPIO_LED, 1);
     if (ret) {
         pr_err("led_hbd: gpio_direction_output failed\n");
         gpio_free(GPIO_LED);
         return ret;
     }
 
+    led_state = 1;
     timer_setup(&blink_timer, blink_callback, 0);
-    mod_timer(&blink_timer, jiffies + HZ);
+    mod_timer(&blink_timer, jiffies + 5 * HZ);
 
-    pr_info("led_hbd: blinking started\n");
+    pr_info("led_hbd: 5s blink started\n");
     return 0;
 }
 
@@ -54,4 +55,4 @@ module_exit(led_hbd_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Thea");
-MODULE_DESCRIPTION("LED blink every second");
+MODULE_DESCRIPTION("LED 5s on 5s off blinker");
