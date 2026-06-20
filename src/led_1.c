@@ -4,7 +4,6 @@
 #include <linux/timer.h>
 
 #define GPIO_LED 529
-#define BLINK_INTERVAL (5 * HZ)
 
 static struct timer_list blink_timer;
 static int led_state = 0;
@@ -13,14 +12,14 @@ static void blink_callback(struct timer_list *t)
 {
     led_state = !led_state;
     gpio_set_value(GPIO_LED, led_state);
-    mod_timer(&blink_timer, jiffies + BLINK_INTERVAL);
+    mod_timer(&blink_timer, jiffies + HZ);
 }
 
 static int __init led_hbd_init(void)
 {
     int ret;
 
-    pr_info("led_hbd: init - blink every 5s\n");
+    pr_info("led_hbd: init - blink every 1s\n");
 
     ret = gpio_request(GPIO_LED, "led_gpio");
     if (ret) {
@@ -32,7 +31,7 @@ static int __init led_hbd_init(void)
     led_state = 1;
 
     timer_setup(&blink_timer, blink_callback, 0);
-    mod_timer(&blink_timer, jiffies + BLINK_INTERVAL);
+    mod_timer(&blink_timer, jiffies + HZ);
 
     pr_info("led_hbd: blinking started\n");
     return 0;
@@ -51,4 +50,4 @@ module_exit(led_hbd_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Thea");
-MODULE_DESCRIPTION("LED blink every 5 seconds");
+MODULE_DESCRIPTION("LED blink every second");
